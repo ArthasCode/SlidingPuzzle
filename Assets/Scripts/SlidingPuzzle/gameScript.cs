@@ -1,108 +1,247 @@
 using UnityEngine;
-public class gameScript : MonoBehaviour
+using Unity.MLAgents;
+using UnityEditor.Actions;
+using Unity.MLAgents.Actuators;
+using Unity.MLAgents.Sensors;
+using System;
+using System.Linq;
+using UnityEngine.Rendering;
+using System.Collections.Generic;
+using UnityEngine.Tilemaps;
+
+public class gameScript : Agent
 {
     private Camera _camera = null;
-    [SerializeField] private Transform emptySpace = null;
+
     [SerializeField] private tileScript[] tiles;
-    int emptySpaceIndex = 8;
+
+    private int emptySpaceIndex;
+    int minDistanceInEpisode;
     
-
-    void Start() {
+    public override void Initialize() {
         _camera = Camera.main;
-        
-        Shuffle();
     }
 
-    void Update() {
-        if(Input.GetMouseButtonDown(0)){
-            Ray ray = _camera.ScreenPointToRay(Input.mousePosition);
-            RaycastHit2D hit = Physics2D.Raycast(ray.origin, ray.direction);
-            if(hit)
+    public override void OnEpisodeBegin()
+    {
+        emptySpaceIndex = 8;
+
+        int max_inversions = (int)Academy.Instance.EnvironmentParameters.GetWithDefault("puzzle_difficulty", 10f);
+        
+        PlaceOnStartPositions();
+        Shuffle(max_inversions);
+    }
+
+    public override void CollectObservations(VectorSensor sensor)
+    {
+       for (int i = 0; i < tiles.Length; i++)
+    {
+        float value = (float)tiles[i].number / 8.0f;
+        sensor.AddObservation(value);
+    }
+    }
+
+    public override void OnActionReceived(ActionBuffers actions)
+    {
+        int act = actions.DiscreteActions[0];   
+        int targetIndex = -1;
+
+        switch (act)
             {
-                if(Vector2.Distance(emptySpace.position, hit.transform.position)<=2)
-                {
+                // Penalty for do nothing
+                case 0:
+                    AddReward(-0.01f);
+                    return;
+
+                // Move right
+                case 1:
+                    if (emptySpaceIndex % 3 != 2) 
+                        targetIndex = emptySpaceIndex + 1;
+
+                    break;
+
+                // Move up
+                case 2:
+                    if (emptySpaceIndex >= 3) 
+                        targetIndex = emptySpaceIndex - 3;
+                    break;
+
+                // Move left
+                case 3:
+                    if (emptySpaceIndex % 3 != 0)
+                        targetIndex = emptySpaceIndex - 1;
+                    break;
+                
+                // Move down
+                case 4: 
+                    if(emptySpaceIndex < 6)
+                        targetIndex = emptySpaceIndex + 3;
+                    break;
+            }
+
+        if (targetIndex != -1)
+        {
+            SwapTiles(emptySpaceIndex, targetIndex);
+
+            emptySpaceIndex = targetIndex;
+            // Penalty for step
+            AddReward(-0.01f);
+
+            if (PuzzleComplete())
+            {
+                AddReward(1f);
+                EndEpisode();
+            }
+        }
+        else AddReward(-0.01f);
+    }
+
+    public override void Heuristic(in ActionBuffers actionsOut)
+    {
+        ActionSegment<int> action = actionsOut.DiscreteActions;
+
+        action[0] = 0;
+        if (Input.GetKeyDown(KeyCode.D))
+        {
+            action[0] = 1;
+        }
+         if (Input.GetKeyDown(KeyCode.W))
+        {
+            action[0] = 2;
+        }
+         if (Input.GetKeyDown(KeyCode.A))
+        {
+            action[0] = 3;
+        }
+         if (Input.GetKeyDown(KeyCode.S))
+        {
+            action[0] = 4;
+        }
+    }
+
+    // void Update() {
+    //     if(Input.GetMouseButtonDown(0)){
+    //         Ray ray = _camera.ScreenPointToRay(Input.mousePosition);
+    //         RaycastHit2D hit = Physics2D.Raycast(ray.origin, ray.direction);
+    //         if(hit)
+    //         {
+    //             if(Vector2.Distance(emptySpace.position, hit.transform.position)<=2)
+    //             {
                     
-                    Vector2 lastEmptySpacePosition = emptySpace.position;
-                    tileScript thisTile = hit.transform.GetComponent<tileScript>();
-                    emptySpace.position = thisTile.targetPosition;
-                    thisTile.targetPosition = lastEmptySpacePosition;
-                    int tileIndex = findIndex(thisTile);
-                    tiles[emptySpaceIndex] = tiles[tileIndex];
-                    tiles[tileIndex] = null;
-                    emptySpaceIndex = tileIndex;
-                }
+    //                 Vector2 lastEmptySpacePosition = emptySpace.position;
+    //                 tileScript thisTile = hit.transform.GetComponent<tileScript>();
+    //                 emptySpace.position = thisTile.targetPosition;
+    //                 thisTile.targetPosition = lastEmptySpacePosition;
+    //                 int tileIndex = findIndex(thisTile);
+    //                 tiles[emptySpaceIndex] = tiles[tileIndex];
+    //                 tiles[tileIndex] = null;
+    //                 emptySpaceIndex = tileIndex;
+    //             }
 
-            }
-        }
-    }
-
-    public void Shuffle()
-{
-    if(emptySpaceIndex != 8)
-        {
-            var tileOn8LastPos = tiles[8].targetPosition;
-            tiles[8].targetPosition = emptySpace.position;
-            emptySpace.position = tileOn8LastPos;
-            tiles[emptySpaceIndex] = tiles[8];
-            tiles[8] = null;
-            emptySpaceIndex = 8;
-        }
-    int invertion;
-    do{
-    for(int i = 0; i <= 7; i++)
-        {
-          
-                var lastPos = tiles[i].targetPosition;
-                int randomIndex = Random.Range(0, 7);
-                tiles[i].targetPosition = tiles[randomIndex].targetPosition;
-                tiles[randomIndex].targetPosition = lastPos;
-                var tile = tiles[i];
-                tiles[i] = tiles[randomIndex];
-                tiles[randomIndex] = tile;
-            
-        }
-
-        invertion = GetInversion();
-        Debug.Log("Puzze shuffled!");
-    }while (invertion%2 != 0);
-        
-}
-
-public int findIndex(tileScript ts)
+    //         }
+    //     }
+    // }
+    private void PlaceOnStartPositions()
     {
-        for(int i = 0; i < tiles.Length; i++)
-        {
-            if(tiles[i] != null)
-            {
-                if(tiles[i] == ts)
-                {
-                    return i;
-                }
-            }
-        }
-        return -1;
-    }
-
-    int GetInversion()
-    {
-        int inversionsSum = 0;
         for (int i = 0; i < tiles.Length; i++)
         {
-            int thisTileInvertion = 0;
-            for(int j = i; j < tiles.Length; j++)
+            if(tiles[i].number == 0)
             {
-                if(tiles[j] != null)
+                tileScript emptySpace = tiles[i];
+                Vector3 emptySpacePosition = emptySpace.targetPosition;
+
+                tiles[i].targetPosition = tiles[emptySpaceIndex].targetPosition; 
+                tiles[i] = tiles[emptySpaceIndex];
+
+                tiles[emptySpaceIndex].targetPosition = emptySpacePosition;
+                tiles[emptySpaceIndex] = emptySpace;
+                
+            }
+
+            if (tiles[i].number == i + 1)
+                continue;
+
+            for (int j = i + 1; j < tiles.Length; j++)
+            {
+                if(tiles[j].number == i + 1)
                 {
-                    if(tiles[i].number > tiles[j].number)
-                    {
-                        thisTileInvertion++;
-                    }
+                    tileScript tile_i = tiles[i];
+                    Vector3 tile_iPosition = tile_i.targetPosition;        
+
+                    tiles[i].targetPosition = tiles[j].targetPosition;
+                    tiles[i] = tiles[j];
+
+                    tiles[j].targetPosition = tile_iPosition;
+                    tiles[j] = tile_i;
+                    
+                    break;
                 }
             }
-            inversionsSum += thisTileInvertion;
         }
-        return inversionsSum;
+    }
+    private void Shuffle(int max_steps)
+    {
+        int lastPosIndex = -1;
+    
+        for(int i = 0; i < max_steps; i++)
+        {
+            List<int> validNeighbors = GetValidNeighbors(emptySpaceIndex);
+
+            if(lastPosIndex != -1)
+                validNeighbors.Remove(lastPosIndex);
+            lastPosIndex = emptySpaceIndex;
+
+            int tileIndexToMove = validNeighbors[UnityEngine.Random.Range(0, validNeighbors.Count)];
+            
+            SwapTiles(emptySpaceIndex, tileIndexToMove);
+
+            emptySpaceIndex = tileIndexToMove; 
+        }
     }
 
+    private void SwapTiles(int emptySpaceIndex, int tileIndexToMove)
+    {
+        
+        tileScript tile = tiles[tileIndexToMove];
+        Vector3 tilePosition = tile.targetPosition;
+        tile.targetPosition = tiles[emptySpaceIndex].targetPosition;
+        tiles[emptySpaceIndex].targetPosition = tilePosition;
+
+        tiles[tileIndexToMove] = tiles[emptySpaceIndex];
+        tiles[emptySpaceIndex] = tile;
+    }
+
+    private static List<int> GetValidNeighbors(int emptySpaceIndex)
+    {
+        List<int> neighbors = new List<int>();
+        
+        if(emptySpaceIndex % 3 != 2)
+            neighbors.Add(emptySpaceIndex + 1);
+    
+        if (emptySpaceIndex > 2) 
+            neighbors.Add(emptySpaceIndex - 3);
+
+        if (emptySpaceIndex % 3 != 0)
+            neighbors.Add(emptySpaceIndex - 1);
+    
+        if(emptySpaceIndex < 6)
+            neighbors.Add(emptySpaceIndex + 3);
+
+        return neighbors;
+    }
+
+    private bool PuzzleComplete()
+    {
+        for (int i = 0; i < tiles.Length; i++)
+        {
+            // Never i + 1 == 9
+            if(tiles[i].number != i + 1 && tiles[i].number != 0)
+                return false;
+
+        }
+        FindFirstObjectByType<ShowMessageUI>()?.ShowMessage();
+        return true;
+    }
 }
+
 
